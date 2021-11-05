@@ -1,11 +1,10 @@
 (load "log.lisp")
 
 (defclass chrome ()
-  ((incognito :initarg :incognito)
-   (process)))
+  ((process)))
 
 (defun make-chrome (&key incognito)
-  (let ((obj (make-instance 'chrome :incognito incognito)))
+  (let ((obj (make-instance 'chrome)))
     
     (with-slots (process) obj
       (setf process
