@@ -1,4 +1,5 @@
 (load "base64.lisp")
+(load "http.lisp")
 
 (require 'asdf)
 (require 'ironclad)
@@ -13,12 +14,14 @@
   (let ((obj (make-instance 'websocket)))
 
     (with-slots (socket stream) obj
-      (let* ((u      (parse-websocket-url url))
-             (host   (car u))
+      (let* ((u      (parse-url url))
+             (scheme (car u))
+             (host   (cadr u))
              (ip     (sb-bsd-sockets:host-ent-address
                        (sb-bsd-sockets:get-host-by-name host)))
-             (port   (or (cadr u) 80))
-             (path   (or (caddr u) "/"))
+             (port   (or (caddr u)
+                         (if (string= scheme "wss") 443 80)))
+             (path   (or (cadddr u) "/"))
              (key    (let ((state (make-random-state t)))
                        (base64-encode
                          (concatenate 'string (loop repeat 16
@@ -32,6 +35,11 @@
                              (ironclad:digest-sequence :sha1
                                (ironclad:ascii-string-to-byte-array
                                  (concatenate 'string key postfix)))))))))
+
+        ; TODO Add support for wss / tls
+        (unless (string= scheme "ws")
+          (error "unsupported scheme"))
+
         (setf socket (make-instance 'sb-bsd-sockets:inet-socket :type :stream :protocol :tcp))
         (sb-bsd-sockets:socket-connect socket ip port)
         (setf stream (sb-bsd-sockets:socket-make-stream socket :input t :output t))
@@ -68,49 +76,6 @@
                 (error "invalid Sec-WebSocket-Accept header")))))))
 
     obj))
-
-(defun parse-websocket-url (url)
-  (let ((host nil)
-        (port nil)
-        (path nil)
-        (i    0))
-    (let ((prefix "ws://"))
-      (unless (eql (search prefix url) 0)
-        (error "unexpected url scheme"))
-      (incf i (length prefix)))
-    (when (= i (length url))
-      (error "incomplete url"))
-
-    (let ((c (char url i))
-          (j nil))
-      (cond ((alpha-char-p c); Hostname
-              (let ((p (lambda (c) (or (alphanumericp c) (char= c #\-) (char= #\.)))))
-                (setq j (position-if-not p url :start i))
-                (setq host (subseq url i j))))
-            ((digit-char-p c) ; IPv4 address
-              (let ((p (lambda (c) (or (digit-char-p c) (char= c #\.)))))
-                (setq j (position-if-not p url :start i))
-                (setq host (subseq url i j))))
-            ((char= c #\[); IPv6 address
-              (let ((k (position #\] url :start i)))
-                (unless k
-                  (error "malformed ipv6 host"))
-                (setq host (subseq url (1+ i) k))
-                (setq j (1+ k))))
-            (t (error "unexpected host format")))
-      (when (or (null j) (= j (length url)))
-        (return-from parse-websocket-url (list host nil nil)))
-      (setq i j))
-
-    (when (char= (char url i) #\:)
-      (let ((j (position-if-not #'digit-char-p url :start (1+ i))))
-        (setq port (parse-integer (subseq url (1+ i) j)))
-        (unless j
-          (return-from parse-websocket-url (list host port nil)))
-        (setq i j)))
-
-    (setq path (subseq url i))
-    (list host port path)))
 
 (defmethod websocket-close ((obj websocket))
   (with-slots (socket stream) obj

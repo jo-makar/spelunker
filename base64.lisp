@@ -38,4 +38,4 @@
 
       (concatenate 'string (mapcan #'convert chunks)))))
 
-; TODO base64-decode
+; TODO Implement base64-decode

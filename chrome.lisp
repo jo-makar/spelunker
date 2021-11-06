@@ -1,4 +1,9 @@
+(load "http.lisp")
 (load "log.lisp")
+(load "websocket.lisp")
+
+(require 'asdf)
+(require 'yason)
 
 (defclass chrome ()
   ((process)))
@@ -27,26 +32,32 @@
           (sb-sys:with-deadline (:seconds 15)
             (let ((prefix "DevTools listening on ")
                   (output (sb-ext:process-output process)))
-              (loop
-                (let ((line (read-line output)))
-                  (log-format 'debug "chrome: ~a" line)
-                  (when (eql (search prefix line) 0)
-                    (setq devtools-url (subseq line (length prefix)))
-                    (log-format 'info "using devtools url ~a" devtools-url)
-                    (return))))))
+              (loop for line = (read-line output)
+                do (log-format 'debug "chrome: ~a" line)
+                   (when (eql (search prefix line) 0)
+                     (setq devtools-url (subseq line (length prefix)))
+                     (log-format 'info "using devtools url ~a" devtools-url)
+                     (return)))))
           (sb-sys:deadline-timeout (c)
             (declare (ignore c))
             (error "deadline reached looking for devtools url")))
 
         (sb-thread:make-thread
           (lambda (output)
-            (loop
-              (let ((line (read-line output)))
-                (log-format 'debug "chrome: ~a" line))))
+            (loop for line = (read-line output nil)
+              while line
+              do (log-format 'debug "chrome: ~a" line)))
           :arguments (list (sb-ext:process-output process)))
 
-        ; FIXME STOPPED Establish the websocket connection
-      ))
+        (sleep 5)
+        (let ((json-url (format nil "http://127.0.0.1:~d/json"
+                          (or (caddr (parse-url devtools-url)) 80))))
+          ; FIXME STOPPED Extract the debugger url from the returned json with the yason module
+          (format t "~a~%" (http-get json-url))
+          )
+
+        ; FIXME Establish the websocket connection to the debugger url
+        ))
 
     obj))
 
@@ -75,5 +86,5 @@
 
 ; FIXME Remove
 (let ((chrome (make-chrome)))
-  (sleep 10)
+  (sleep 15)
   (chrome-close chrome))
