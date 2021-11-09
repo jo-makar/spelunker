@@ -8,7 +8,8 @@
 
 (defclass websocket ()
   ((socket)
-   (stream)))
+   (stream)
+   (frames :initform '())))
 
 (defun make-websocket (url)
   (let ((self (make-instance 'websocket)))
@@ -117,22 +118,41 @@
       (write-sequence frame stream)
       (finish-output stream))))
 
-; FIXME STOPPED Will need to retrieve and parse websocket frames and process them into messages
-;               Will need to maintain a buffer of frames and unconsumed messages
-;               Likely will also need to handle control frames as well here (ping, pong, close)
-;               Rely on caller's invocation of "read-message" to drive when frames are processed
-;               Ie it potentially blocks and returns the next (potentially buffered) message
 (defmethod websocket-read ((self websocket))
-  (let ((stream (slot-value self 'stream))
-        (frame (make-array 2 :adjustable t :fill-pointer 0)))
-    (read-sequence frame stream)
-    (print frame)
-    ))
+  (with-slots (stream frames) self
+    (let ((header  (make-array 0 :element-type '(unsigned-byte 8) :adjustable t :fill-pointer t)))
+      (vector-push-extend (read-byte stream) header)
+      (vector-push-extend (read-byte stream) header)
+      (when (= (ash (aref header 1) -7) 1)
+        (error "mask bit set"))
+      ; TODO Handle ping and close opcodes
+      (let ((opcode (logand (aref header 0) #x0f)))
+        (unless (<= opcode 2)
+          (error "unsupported opcode")))
+      (let ((payload-length (let ((l (logand (aref header 1) #x7f)))
+                              (cond ((< l 126) l)
+                                    ((= l 126) (loop repeat 2
+                                                     do (vector-push-extend (read-byte stream) header))
+                                               (apply #'logior (loop for i from 2 to 3
+                                                                     for j = 8 then (- j 8)
+                                                                     collect (ash (aref header i) j))))
+                                    (t         (loop repeat 8
+                                                     do (vector-push-extend (read-byte stream) header))
+                                               (apply #'logior (loop for i from 2 to 9
+                                                                     for j = 56 then (- j 8)
+                                                                     collect (ash (aref header i) j))))))))
+        (let ((payload (let ((s (make-string-output-stream)))
+                         (loop repeat payload-length
+                               do (write-char (read-char stream) s))
+                         (get-output-stream-string s))))
+          (setf frames (append frames (list payload)))
+          (when (= (ash (aref header 0) -7) 1) ; Fin bit
+            (let ((message (apply #'concatenate 'string frames)))
+              (setf frames '())
+              message)))))))
 
 ; FIXME Remove
 (let ((websocket (make-websocket "ws://127.0.0.1:39285/devtools/page/596DC941BFCF753717BCF4FFC8A9461F")))
-  (sleep 1)
   (websocket-write websocket "{\"id\":0,\"method\":\"Runtime.evaluate\",\"params\":{\"expression\":\"navigator.userAgent\"}}")
-  (sleep 1)
-  (websocket-read websocket)
+  (format t "~a~%" (websocket-read websocket))
   (websocket-close websocket))
