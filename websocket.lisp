@@ -11,9 +11,9 @@
    (stream)))
 
 (defun make-websocket (url)
-  (let ((obj (make-instance 'websocket)))
+  (let ((self (make-instance 'websocket)))
 
-    (with-slots (socket stream) obj
+    (with-slots (socket stream) self
       (let* ((u      (parse-url url))
              (scheme (car u))
              (host   (cadr u))
@@ -42,14 +42,18 @@
 
         (setf socket (make-instance 'sb-bsd-sockets:inet-socket :type :stream :protocol :tcp))
         (sb-bsd-sockets:socket-connect socket ip port)
-        (setf stream (sb-bsd-sockets:socket-make-stream socket :input t :output t))
+
+        ; Use element-type of :default to support a bivalent stream (ie chars and bytes)
+        (setf stream (sb-bsd-sockets:socket-make-stream socket :element-type :default
+                                                               :input t :output t))
 
         (format stream "GET ~a HTTP/1.1~c~c" path #\return #\linefeed)
-        (format stream "Host: ~a~c~c" host #\return #\linefeed)
+        (format stream "Host: ~a:~d~c~c" host port #\return #\linefeed)
         (format stream "Upgrade: websocket~c~c" #\return #\linefeed)
         (format stream "Connection: Upgrade~c~c" #\return #\linefeed)
         (format stream "Sec-WebSocket-Key: ~a~c~c" key #\return #\linefeed)
         (format stream "Sec-WebSocket-Version: 13~c~c" #\return #\linefeed)
+        (format stream "Origin: http://~a~c~c" host #\return #\linefeed)
         (format stream "~c~c" #\return #\linefeed)
         (finish-output stream)
 
@@ -75,9 +79,60 @@
               (unless (string= val accept)
                 (error "invalid Sec-WebSocket-Accept header")))))))
 
-    obj))
+    self))
 
-(defmethod websocket-close ((obj websocket))
-  (with-slots (socket stream) obj
+(defmethod websocket-close ((self websocket))
+  (with-slots (socket stream) self
     (close stream)
     (sb-bsd-sockets:socket-close socket)))
+
+(defmethod websocket-write ((self websocket) payload)
+  (let ((frame    (make-array 0 :element-type '(unsigned-byte 8) :adjustable t :fill-pointer t))
+        (binary   (let ((binary-char-p (lambda (c)
+                                         (let ((d (char-code c)))
+                                           (or (and (<= d 31) (/= d 9) (/= d 10) (/= d 13))
+                                               (>= d 128))))))
+                    (some binary-char-p payload)))
+        (mask-key (let ((state (make-random-state t)))
+                    (loop repeat 4 collect (random 256 state)))))
+    (vector-push-extend (logior #x80 (if binary #x2 #x1)) frame)
+
+    (let ((l (length payload)))
+      (cond ((< l 126)        (vector-push-extend (logior #x80 l) frame))
+            ((< l (ash 1 16)) (vector-push-extend (logior #x80 126) frame)
+                              (loop for i from -8 to 0 by 8
+                                    do (vector-push-extend (logand (ash l i) #xff) frame)))
+            ((< l (ash 1 64)) (vector-push-extend (logior #x80 127) frame)
+                              (loop for i from -56 to 0 by 8
+                                    do (vector-push-extend (logand (ash l i) #xff) frame)))
+            (t                (error "max frame size exceeded"))))
+
+    (loop for b in mask-key do (vector-push-extend b frame))
+
+    (loop for b across payload
+          for k = 0 then (mod (1+ k) 4)
+          do (vector-push-extend (logxor (char-code b) (nth k mask-key)) frame))
+
+    (let ((stream (slot-value self 'stream)))
+      (write-sequence frame stream)
+      (finish-output stream))))
+
+; FIXME STOPPED Will need to retrieve and parse websocket frames and process them into messages
+;               Will need to maintain a buffer of frames and unconsumed messages
+;               Likely will also need to handle control frames as well here (ping, pong, close)
+;               Rely on caller's invocation of "read-message" to drive when frames are processed
+;               Ie it potentially blocks and returns the next (potentially buffered) message
+(defmethod websocket-read ((self websocket))
+  (let ((stream (slot-value self 'stream))
+        (frame (make-array 2 :adjustable t :fill-pointer 0)))
+    (read-sequence frame stream)
+    (print frame)
+    ))
+
+; FIXME Remove
+(let ((websocket (make-websocket "ws://127.0.0.1:39285/devtools/page/596DC941BFCF753717BCF4FFC8A9461F")))
+  (sleep 1)
+  (websocket-write websocket "{\"id\":0,\"method\":\"Runtime.evaluate\",\"params\":{\"expression\":\"navigator.userAgent\"}}")
+  (sleep 1)
+  (websocket-read websocket)
+  (websocket-close websocket))

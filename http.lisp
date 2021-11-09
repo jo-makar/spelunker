@@ -1,3 +1,5 @@
+(require 'sb-bsd-sockets)
+
 (defun parse-url (url)
   (let ((scheme nil)
         (host   nil)

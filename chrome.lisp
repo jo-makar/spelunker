@@ -6,12 +6,14 @@
 (require 'yason)
 
 (defclass chrome ()
-  ((process)))
+  ((process)
+   (websocket)
+   (request-id :initform 0)))
 
 (defun make-chrome (&key incognito)
-  (let ((obj (make-instance 'chrome)))
+  (let ((self (make-instance 'chrome)))
     
-    (with-slots (process) obj
+    (with-slots (process websocket) self
       (setf process
             (sb-ext:run-program
               "/opt/google/chrome/chrome"
@@ -50,19 +52,40 @@
           :arguments (list (sb-ext:process-output process)))
 
         (sleep 5)
-        (let ((json-url (format nil "http://127.0.0.1:~d/json"
-                          (or (caddr (parse-url devtools-url)) 80))))
-          ; FIXME STOPPED Extract the debugger url from the returned json with the yason module
-          (format t "~a~%" (http-get json-url))
-          )
+        (let* ((port         (caddr (parse-url devtools-url)))
+               (json-url     (format nil "http://127.0.0.1:~d/json" port))
+               (id           (gethash "id" (car (yason:parse (http-get json-url)))))
+               (debugger-url (format nil "ws://127.0.0.1:~d/devtools/page/~a" port id)))
+          (log-format 'info "using debugger url ~a" debugger-url)
+          (setf websocket (make-websocket debugger-url))))
 
-        ; FIXME Establish the websocket connection to the debugger url
-        ))
+      ; FIXME Need support for websocket framing impelementation first
+      ; FIXME Make a thread that continuously reads from websocket
+      ;       Perhaps this shouldn't read lines but chunks instead
+      ;       Will need to process messages received
+      ;(sb-thread:make-thread
+      ;  (lambda (stream)
+      ;    (loop for line = (read-line stream nil)
+      ;      while line
+      ;      ; FIXME Change to debug
+      ;      do (log-format 'info ">>> ~a" line)))
+      ;  :arguments (list (slot-value websocket 'stream)))
 
-    obj))
+      ; FIXME Make this a user-friendly method
+      ;       Consider writing a loop that accepts an assoc list
+      ;(let ((hash-table (make-hash-table)))
+      ;  (setf (gethash "id" hash-table) 0)
+      ;  (setf (gethash "method" hash-table) "navigator.userAgent")
+      ;  (format (slot-value websocket 'stream) "~a" (yason:encode hash-table))
+      ;  )
+      )
 
-(defmethod chrome-close ((obj chrome))
-  (let ((process (slot-value obj 'process)))
+    self))
+
+(defmethod chrome-close ((self chrome))
+  (websocket-close (slot-value self 'websocket))
+
+  (let ((process (slot-value self 'process)))
     (when (sb-ext:process-alive-p process)
       (flet ((process-wait-with-deadline (event &optional deadline)
                (handler-case
