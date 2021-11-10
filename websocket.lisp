@@ -83,8 +83,11 @@
     self))
 
 (defmethod websocket-close ((self websocket))
-  (with-slots (socket stream) self
-    (close stream)
+  (with-slots (socket) self
+    ; shutdown(2) appears to be necessary to interrupt an active blocking stream read.
+    ; This also implies that explicitly closing the stream is no longer necessary. 
+    ; TODO Not perfect, seems like the chrome-websocket thread continues running in the repl
+    (sb-bsd-sockets:socket-shutdown socket :direction :input)
     (sb-bsd-sockets:socket-close socket)))
 
 (defmethod websocket-write ((self websocket) payload)
@@ -114,45 +117,48 @@
           for k = 0 then (mod (1+ k) 4)
           do (vector-push-extend (logxor (char-code b) (nth k mask-key)) frame))
 
-    (let ((stream (slot-value self 'stream)))
+    (with-slots (stream) self
       (write-sequence frame stream)
       (finish-output stream))))
 
 (defmethod websocket-read ((self websocket))
   (with-slots (stream frames) self
-    (let ((header  (make-array 0 :element-type '(unsigned-byte 8) :adjustable t :fill-pointer t)))
-      (vector-push-extend (read-byte stream) header)
-      (vector-push-extend (read-byte stream) header)
-      (when (= (ash (aref header 1) -7) 1)
-        (error "mask bit set"))
-      ; TODO Handle ping and close opcodes
-      (let ((opcode (logand (aref header 0) #x0f)))
-        (unless (<= opcode 2)
-          (error "unsupported opcode")))
-      (let ((payload-length (let ((l (logand (aref header 1) #x7f)))
-                              (cond ((< l 126) l)
-                                    ((= l 126) (loop repeat 2
-                                                     do (vector-push-extend (read-byte stream) header))
-                                               (apply #'logior (loop for i from 2 to 3
-                                                                     for j = 8 then (- j 8)
-                                                                     collect (ash (aref header i) j))))
-                                    (t         (loop repeat 8
-                                                     do (vector-push-extend (read-byte stream) header))
-                                               (apply #'logior (loop for i from 2 to 9
-                                                                     for j = 56 then (- j 8)
-                                                                     collect (ash (aref header i) j))))))))
-        (let ((payload (let ((s (make-string-output-stream)))
-                         (loop repeat payload-length
-                               do (write-char (read-char stream) s))
-                         (get-output-stream-string s))))
-          (setf frames (append frames (list payload)))
-          (when (= (ash (aref header 0) -7) 1) ; Fin bit
-            (let ((message (apply #'concatenate 'string frames)))
-              (setf frames '())
-              message)))))))
-
-; FIXME Remove
-(let ((websocket (make-websocket "ws://127.0.0.1:39285/devtools/page/596DC941BFCF753717BCF4FFC8A9461F")))
-  (websocket-write websocket "{\"id\":0,\"method\":\"Runtime.evaluate\",\"params\":{\"expression\":\"navigator.userAgent\"}}")
-  (format t "~a~%" (websocket-read websocket))
-  (websocket-close websocket))
+    (labels ((read-x-handle-eof (func stream)
+               (let ((rv (apply func (list stream nil))))
+                 (unless rv (return-from websocket-read))
+                 rv))
+             (read-byte-handle-eof (stream)
+               (read-x-handle-eof #'read-byte stream))
+             (read-char-handle-eof (stream)
+               (read-x-handle-eof #'read-char stream)))
+      (loop
+        (let ((header  (make-array 0 :element-type '(unsigned-byte 8) :adjustable t :fill-pointer t)))
+          (vector-push-extend (read-byte-handle-eof stream) header)
+          (vector-push-extend (read-byte-handle-eof stream) header)
+          (when (= (ash (aref header 1) -7) 1)
+            (error "mask bit set"))
+          ; TODO Handle ping and close opcodes
+          (let ((opcode (logand (aref header 0) #x0f)))
+            (unless (<= opcode 2)
+              (error "unsupported opcode")))
+          (let ((payload-length (let ((l (logand (aref header 1) #x7f)))
+                                  (cond ((< l 126) l)
+                                        ((= l 126) (loop repeat 2
+                                                         do (vector-push-extend (read-byte-handle-eof stream) header))
+                                                   (apply #'logior (loop for i from 2 to 3
+                                                                         for j = 8 then (- j 8)
+                                                                         collect (ash (aref header i) j))))
+                                        (t         (loop repeat 8
+                                                         do (vector-push-extend (read-byte-handle-eof stream) header))
+                                                   (apply #'logior (loop for i from 2 to 9
+                                                                         for j = 56 then (- j 8)
+                                                                         collect (ash (aref header i) j))))))))
+            (let ((payload (let ((s (make-string-output-stream)))
+                             (loop repeat payload-length
+                                   do (write-char (read-char-handle-eof stream) s))
+                             (get-output-stream-string s))))
+              (setf frames (append frames (list payload)))
+              (when (= (ash (aref header 0) -7) 1) ; Fin bit
+                (let ((message (apply #'concatenate 'string frames)))
+                  (setf frames '())
+                  (return-from websocket-read message))))))))))

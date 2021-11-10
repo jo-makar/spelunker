@@ -49,7 +49,8 @@
             (loop for line = (read-line output nil)
               while line
               do (log-format 'debug "chrome: ~a" line)))
-          :arguments (list (sb-ext:process-output process)))
+          :arguments (list (sb-ext:process-output process))
+          :name "chrome-stdout/err")
 
         (sleep 5)
         (let* ((port         (caddr (parse-url devtools-url)))
@@ -59,17 +60,15 @@
           (log-format 'info "using debugger url ~a" debugger-url)
           (setf websocket (make-websocket debugger-url))))
 
-      ; FIXME Need support for websocket framing impelementation first
-      ; FIXME Make a thread that continuously reads from websocket
-      ;       Perhaps this shouldn't read lines but chunks instead
-      ;       Will need to process messages received
-      ;(sb-thread:make-thread
-      ;  (lambda (stream)
-      ;    (loop for line = (read-line stream nil)
-      ;      while line
-      ;      ; FIXME Change to debug
-      ;      do (log-format 'info ">>> ~a" line)))
-      ;  :arguments (list (slot-value websocket 'stream)))
+      ; FIXME STOPPED define a ring-buffer class and use it to store messages protected by a mutex
+      (sb-thread:make-thread
+        (lambda (websocket)
+          (loop for message = (websocket-read websocket)
+            while message
+            ; FIXME Change to debug
+            do (log-format 'info ">>> ~a" message)))
+        :arguments (list websocket)
+        :name "chrome-websocket")
 
       ; FIXME Make this a user-friendly method
       ;       Consider writing a loop that accepts an assoc list
@@ -78,14 +77,16 @@
       ;  (setf (gethash "method" hash-table) "navigator.userAgent")
       ;  (format (slot-value websocket 'stream) "~a" (yason:encode hash-table))
       ;  )
+      (websocket-write websocket "{\"id\":0,\"method\":\"Runtime.evaluate\",\"params\":{\"expression\":\"navigator.userAgent\"}}")
+      ;(format t "~a~%" (websocket-read websocket))
       )
 
     self))
 
 (defmethod chrome-close ((self chrome))
-  (websocket-close (slot-value self 'websocket))
+  (with-slots (process websocket) self
+    (websocket-close websocket)
 
-  (let ((process (slot-value self 'process)))
     (when (sb-ext:process-alive-p process)
       (flet ((process-wait-with-deadline (event &optional deadline)
                (handler-case
@@ -109,5 +110,7 @@
 
 ; FIXME Remove
 (let ((chrome (make-chrome)))
-  (sleep 15)
-  (chrome-close chrome))
+  (sleep 1)
+  (chrome-close chrome)
+  (sleep 1)
+  (format t "~a~%" (sb-thread:list-all-threads)))
