@@ -1,19 +1,25 @@
 (load "http.lisp")
-(load "log.lisp")
+(load "log-format.lisp")
+(load "ring-buffer.lisp")
 (load "websocket.lisp")
 
 (require 'asdf)
 (require 'yason)
 
+(defclass message ()
+  ((json      :initarg :json :reader json)
+   (timestamp :initform (get-universal-time) :reader timestamp)))
+
 (defclass chrome ()
   ((process)
    (websocket)
+   (messages :initform (make-instance 'ring-buffer))
    (request-id :initform 0)))
 
 (defun make-chrome (&key incognito)
   (let ((self (make-instance 'chrome)))
     
-    (with-slots (process websocket) self
+    (with-slots (process websocket messages) self
       (setf process
             (sb-ext:run-program
               "/opt/google/chrome/chrome"
@@ -60,14 +66,14 @@
           (log-format 'info "using debugger url ~a" debugger-url)
           (setf websocket (make-websocket debugger-url))))
 
-      ; FIXME STOPPED define a ring-buffer class and use it to store messages protected by a mutex
       (sb-thread:make-thread
-        (lambda (websocket)
+        (lambda (websocket messages)
           (loop for message = (websocket-read websocket)
             while message
             ; FIXME Change to debug
-            do (log-format 'info ">>> ~a" message)))
-        :arguments (list websocket)
+            do (log-format 'info ">>> ~a" message)
+               (ring-buffer-insert messages (make-instance 'message :json (yason:parse message)))))
+        :arguments (list websocket messages)
         :name "chrome-websocket")
 
       ; FIXME Make this a user-friendly method
@@ -107,6 +113,12 @@
         (process-wait-with-deadline "SIGKILL")
 
         (error "unable to kill chrome process (pid ~d)" (sb-ext:process-pid process))))))
+
+; FIXME STOPPED
+;(defmethod chrome-runtime-evaluate ((self chrome) method &optional params)
+;            ; FIXME Change to debug
+;            ;do (log-format 'info ">>> ~a" message)
+;  )
 
 ; FIXME Remove
 (let ((chrome (make-chrome)))
