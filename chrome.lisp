@@ -72,16 +72,21 @@
         :arguments (list websocket messages)
         :name "chrome-websocket")
 
-      ; FIXME Review NewBrowserDevTools from ~/projects/scrapers/browser_devtools.go
-      (chrome-execute self "Runtime.evaluate" '(("expression" . "navigator.userAgent")))
-      ;(websocket-write websocket "{\"id\":0,\"method\":\"Runtime.evaluate\",\"params\":{\"expression\":\"navigator.userAgent\"}}")
-      ;(format t "~a~%" (websocket-read websocket))
+      ; FIXME STOPPED Review NewBrowserDevTools from ~/projects/scrapers/browser_devtools.go
+      (format t "x ~a~%" (chrome-execute self "Runtime.evaluate" :params '(("expression" .  "navigator.userAgent"))))
       )
 
     self))
 
 (defmethod chrome-close ((self chrome))
   (with-slots (process websocket) self
+    (handler-case
+      (progn
+        (chrome-execute self "Browser.close" :deadline 10)
+        (return-from chrome-close))
+      (sb-sys:deadline-timeout (c)
+        (declare (ignore c))
+        (log-format 'warn "deadline reached waiting for Browser.close")))
     (websocket-close websocket)
 
     (when (sb-ext:process-alive-p process)
@@ -93,25 +98,19 @@
                  (sb-sys:deadline-timeout (c)
                    (declare (ignore c))
                    (log-format 'warn "deadline reached waiting for process after ~a" event)))))
-
-        ; FIXME Send a Browser.close command over the websocket
-        ;(process-wait-with-deadline "Browser.close")
-
         (sb-ext:process-kill process 15)
         (process-wait-with-deadline "SIGTERM")
-
         (sb-ext:process-kill process 9)
         (process-wait-with-deadline "SIGKILL")
-
         (error "unable to kill chrome process (pid ~d)" (sb-ext:process-pid process))))))
 
-(defmethod chrome-execute ((self chrome) method &optional params)
+(defmethod chrome-execute ((self chrome) method &key params deadline)
   (with-slots (websocket messages request-id) self
-    (let ((request-hash-table (make-hash-table)))
+    (let ((request-hash-table (make-hash-table :test #'equal)))
       (setf (gethash "id" request-hash-table) (incf request-id))
       (setf (gethash "method" request-hash-table) method)
       (when params
-        (let ((params-hash-table (make-hash-table)))
+        (let ((params-hash-table (make-hash-table :test #'equal)))
           (loop for pair in params
                 do (setf (gethash (car pair) params-hash-table) (cdr pair)))
           (setf (gethash "params" request-hash-table) params-hash-table)))
@@ -119,20 +118,24 @@
                               (yason:encode request-hash-table stream)
                               (get-output-stream-string stream))))
         (log-format 'debug "<<< ~a" request-string)
-        (websocket-write websocket request-string)))
+        (websocket-write websocket request-string))
 
-    ; FIXME STOPPED Wait for response
-    ;               Define a predicate to match the request-id for the preceding request
-    ;(loop for response = (ring-buffer-find-if ring-buffer pred)
-    ;      if response
-    ;        do (format t "~a~%" response)
-    ;           (return)
-    ;      else
-    ;        do (sleep 1))
-
-    ; FIXME Implement a timeout mechanism (using sb-sys:with-deadline?)
-    ;       It should be specified by an optional parameter to the method
-    ))
+      (sb-sys:with-deadline (:seconds (or deadline 5))
+        (flet ((equal-request-id-p (message)
+                 (eql (gethash "id" (slot-value message 'json))
+                      (gethash "id" request-hash-table))))
+          (loop for response = (ring-buffer-find-if messages #'equal-request-id-p)
+                if response
+                  do (with-slots (json) response
+                       (multiple-value-bind (result result-exists) (gethash "result" json)
+                         (unless result-exists
+                           (error "result key not found"))
+                         (multiple-value-bind (result2 result2-exists) (gethash "result" result)
+                           (return-from chrome-execute
+                             (when result2-exists
+                               (return-from chrome-execute (gethash "value" result2)))))))
+                else
+                  do (sleep 0.1)))))))
 
 (defclass message ()
   ((json      :initarg :json :reader json)
@@ -141,8 +144,6 @@
 ; FIXME Remove
 (let ((chrome (make-chrome)))
   (sleep 1)
-  (chrome-execute chrome "foo" '(("a" . 1) ("b" . 2)))
-  (sleep 1)
   (chrome-close chrome))
 
-; TODO Add support for sessions (via devtools Target.attachToTarget?)
+; TODO Add support for simultaneous sessions (via devtools Target.attachToTarget)
