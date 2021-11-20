@@ -133,16 +133,10 @@
           (loop for response = (ring-buffer-find-if messages #'equal-request-id-p)
                 if response
                   do (with-slots (json) response
-                       (when raw-response
-                         (return-from chrome-execute json))
-                       ; FIXME STOPPED Write a helper function to simplify use of multiple-value-bind in this file
-                       (multiple-value-bind (result result-exists) (gethash "result" json)
-                         (unless result-exists
-                           (error "result key not found"))
-                         (multiple-value-bind (result2 result2-exists) (gethash "result" result)
-                           (return-from chrome-execute
-                             (when result2-exists
-                               (return-from chrome-execute (gethash "value" result2)))))))
+                       (return-from chrome-execute
+                         (if raw-response
+                           json
+                           (gethash-nested json '("result" "result" "value")))))
                 else
                   do (sleep 0.1)))))))
 
@@ -154,27 +148,13 @@
           (setf params (cons `("referrer" . ,referrer) params)))
 
         (let* ((response (chrome-execute self "Page.navigate" :params params :raw-response t))
-               (frame-id  (multiple-value-bind (result result-exists) (gethash "result" response)
-                            (unless result-exists
-                              (error "result key not found"))
-                            (multiple-value-bind (frame-id frame-id-exists) (gethash "frameId" result)
-                              (unless frame-id-exists
-                                (error "frameId key not found"))
-                              frame-id))))
+               (frame-id (gethash-nested response '("result" "frameId"))))
           (flet ((navigated-frame-id-p (message)
                    (with-slots (json) message
                      (unless (string= (gethash "method" json) "Page.frameNavigated")
                        (return-from navigated-frame-id-p))
-                     (multiple-value-bind (params params-exists) (gethash "params" json)
-                       (unless params-exists
-                         (return-from navigated-frame-id-p))
-                       (multiple-value-bind (frame frame-exists) (gethash "frame" params)
-                         (unless frame-exists
-                           (return-from navigated-frame-id-p))
-                         (multiple-value-bind (id id-exists) (gethash "id" frame)
-                           (unless id-exists
-                             (return-from navigated-frame-id-p))
-                           (string= id frame-id)))))))
+                     (string= frame-id
+                              (gethash-nested json '("params" "frame" "id"))))))
             (loop for message = (ring-buffer-find-if messages #'navigated-frame-id-p)
                   if message
                     do (return-from chrome-goto)
@@ -187,9 +167,13 @@
   ((json      :initarg :json :reader json)
    (timestamp :initform (get-universal-time) :reader timestamp)))
 
-; FIXME Remove
-(let ((chrome (make-chrome)))
-  (chrome-goto chrome "https://www.google.com")
-  (chrome-close chrome))
+(defun gethash-nested (hash path)
+  (let ((current hash))
+    (loop for hop in path
+          do (multiple-value-bind (value exists) (gethash hop current)
+               (unless exists
+                 (return-from gethash-nested '(nil nil)))
+               (setq current value)))
+    (values current t)))
 
 ; TODO Add support for simultaneous sessions (via devtools Target.attachToTarget)
