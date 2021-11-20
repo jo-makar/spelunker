@@ -1,14 +1,11 @@
 (load "http.lisp")
+(defvar *log-level* 'debug) ; FIXME Remove
 (load "log-format.lisp")
 (load "ring-buffer.lisp")
 (load "websocket.lisp")
 
 (require 'asdf)
 (require 'yason)
-
-(defclass message ()
-  ((json      :initarg :json :reader json)
-   (timestamp :initform (get-universal-time) :reader timestamp)))
 
 (defclass chrome ()
   ((process)
@@ -70,20 +67,14 @@
         (lambda (websocket messages)
           (loop for message = (websocket-read websocket)
             while message
-            ; FIXME Change to debug
-            do (log-format 'info ">>> ~a" message)
+            do (log-format 'debug ">>> ~a" message)
                (ring-buffer-insert messages (make-instance 'message :json (yason:parse message)))))
         :arguments (list websocket messages)
         :name "chrome-websocket")
 
-      ; FIXME Make this a user-friendly method
-      ;       Consider writing a loop that accepts an assoc list
-      ;(let ((hash-table (make-hash-table)))
-      ;  (setf (gethash "id" hash-table) 0)
-      ;  (setf (gethash "method" hash-table) "navigator.userAgent")
-      ;  (format (slot-value websocket 'stream) "~a" (yason:encode hash-table))
-      ;  )
-      (websocket-write websocket "{\"id\":0,\"method\":\"Runtime.evaluate\",\"params\":{\"expression\":\"navigator.userAgent\"}}")
+      ; FIXME Review NewBrowserDevTools from ~/projects/scrapers/browser_devtools.go
+      (chrome-execute self "Runtime.evaluate" '(("expression" . "navigator.userAgent")))
+      ;(websocket-write websocket "{\"id\":0,\"method\":\"Runtime.evaluate\",\"params\":{\"expression\":\"navigator.userAgent\"}}")
       ;(format t "~a~%" (websocket-read websocket))
       )
 
@@ -114,15 +105,44 @@
 
         (error "unable to kill chrome process (pid ~d)" (sb-ext:process-pid process))))))
 
-; FIXME STOPPED
-;(defmethod chrome-runtime-evaluate ((self chrome) method &optional params)
-;            ; FIXME Change to debug
-;            ;do (log-format 'info ">>> ~a" message)
-;  )
+(defmethod chrome-execute ((self chrome) method &optional params)
+  (with-slots (websocket messages request-id) self
+    (let ((request-hash-table (make-hash-table)))
+      (setf (gethash "id" request-hash-table) (incf request-id))
+      (setf (gethash "method" request-hash-table) method)
+      (when params
+        (let ((params-hash-table (make-hash-table)))
+          (loop for pair in params
+                do (setf (gethash (car pair) params-hash-table) (cdr pair)))
+          (setf (gethash "params" request-hash-table) params-hash-table)))
+      (let ((request-string (let ((stream (make-string-output-stream)))
+                              (yason:encode request-hash-table stream)
+                              (get-output-stream-string stream))))
+        (log-format 'debug "<<< ~a" request-string)
+        (websocket-write websocket request-string)))
+
+    ; FIXME STOPPED Wait for response
+    ;               Define a predicate to match the request-id for the preceding request
+    ;(loop for response = (ring-buffer-find-if ring-buffer pred)
+    ;      if response
+    ;        do (format t "~a~%" response)
+    ;           (return)
+    ;      else
+    ;        do (sleep 1))
+
+    ; FIXME Implement a timeout mechanism (using sb-sys:with-deadline?)
+    ;       It should be specified by an optional parameter to the method
+    ))
+
+(defclass message ()
+  ((json      :initarg :json :reader json)
+   (timestamp :initform (get-universal-time) :reader timestamp)))
 
 ; FIXME Remove
 (let ((chrome (make-chrome)))
   (sleep 1)
-  (chrome-close chrome)
+  (chrome-execute chrome "foo" '(("a" . 1) ("b" . 2)))
   (sleep 1)
-  (format t "~a~%" (sb-thread:list-all-threads)))
+  (chrome-close chrome))
+
+; TODO Add support for sessions (via devtools Target.attachToTarget?)
