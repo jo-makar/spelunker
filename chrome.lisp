@@ -1,6 +1,6 @@
+(load "containers.lisp")
 (load "http.lisp")
 (load "log-format.lisp")
-(load "ring-buffer.lisp")
 (load "websocket.lisp")
 
 (require 'asdf)
