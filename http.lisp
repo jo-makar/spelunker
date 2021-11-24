@@ -48,6 +48,21 @@
     (setq path (subseq url i))
     (list scheme host port path)))
 
+(defun percent-encode (s)
+  (apply #'concatenate 'string
+         (loop for c in (coerce s 'list)
+               collect (let ((n (char-code c)))
+                         (cond ((or (and (>= n 65) (<= n 90))
+                                    (and (>= n 97) (<= n 122))
+                                    (and (>= n 48) (<= n 57))
+                                    (char= c #\-)
+                                    (char= c #\_)
+                                    (char= c #\.)
+                                    (char= c #\~))             (string c))
+                                (t                             (format nil "%~2,'0x" n)))))))
+
+; TODO Implement percent-decode
+
 (defun http-get (url)
   (let* ((u      (parse-url url))
          (scheme (car u))

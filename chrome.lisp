@@ -161,7 +161,7 @@
                   else
                     do (sleep 0.1))))))))
   
-; TODO Implement chrome-wait-for-event, chrome-input-text (cf the golang impl)
+; TODO Implement chrome-input-text (cf the golang impl)
 
 (defclass message ()
   ((json      :initarg :json :reader json)
