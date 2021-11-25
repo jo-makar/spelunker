@@ -26,4 +26,5 @@
           (let ((value (format nil "<img src=\"data:~a,~a\"/>"
                                    media-type
                                    (base64-encode (map 'string #'code-char image)))))
-            (fixed-hash-table-set *image-url-cache* image-url value)))))))
+            (fixed-hash-table-set *image-url-cache* image-url value)
+            value))))))
