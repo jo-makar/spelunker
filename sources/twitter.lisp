@@ -42,7 +42,7 @@
                 do (setf (gethash (url tweet) retval) tweet))
 
           (when (or (= (hash-table-count retval) count)
-                    (>= (hash-table-count retval) 100))
+                    (>= (hash-table-count retval) 5)) ; FIXME 100
             (return retval)))
 
         (chrome-runtime-evaluate "window.scrollTo(0, document.body.scrollHeight)")))))
@@ -79,7 +79,7 @@
 
       :name (lquery:$1 second-a "span" (text))
 
-      :url (concatenate 'string "https://twiter.com" (lquery:$1 third-a (attr "href")))
+      :url (concatenate 'string "https://twitter.com" (lquery:$1 third-a (attr "href")))
 
       :timestamp (lquery:$1 article "time" (attr "datetime"))
 
@@ -90,16 +90,3 @@
       ;      Most likely handle in the same manner as profile-image
       :has-media (or (> (length (lquery:$1 tweet (parent) (siblings) (html))) 0)
                      (null (lquery:$1 tweet (text)))))))
-
-; FIXME STOPPED Remove this and build a framework with sqlite and smtp
-(let ((chrome (make-chrome)))
-  (loop for key being the hash-key using (hash-value value)
-        of (twitter-tweets chrome "lisperati")
-        do (let ((tweet value))
-             (format t "~a~%" (url tweet))
-             (format t "~a ~a~%" (name tweet) (handle tweet))
-             (format t "~a~%" (timestamp tweet))
-             (format t "~a~%" (tweet-text tweet))
-             (format t "~a~%" (has-media tweet))
-             (format t "~%**********~%~%")))
-  (chrome-close chrome))
