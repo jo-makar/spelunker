@@ -23,7 +23,7 @@
         (multiple-value-bind (image resp-code) (drakma:http-request image-url)
           (unless (= resp-code 200)
             (error (format nil "problem downloading image url: ~a" image-url)))
-          (let ((value (format nil "<img src=\"data:~a,~a\"/>"
+          (let ((value (format nil "<img src=\"data:~a;base64,~a\"/>"
                                    media-type
                                    (base64-encode (map 'string #'code-char image)))))
             (fixed-hash-table-set *image-url-cache* image-url value)
