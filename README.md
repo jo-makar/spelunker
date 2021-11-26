@@ -13,6 +13,8 @@ user-defined interest.
 The initial plan is to generate periodic emails (ie for use as a daily cronjob) then consider
 building an interactive web application to more easily support modifying system parameters.
 
+![screenshot](screenshot.png)
+
 ## Sources
 
 Scraping is implemented using a custom Chrome DevTools interface.  System state (ie seen entries) is

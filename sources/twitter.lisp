@@ -42,7 +42,7 @@
                 do (setf (gethash (url tweet) retval) tweet))
 
           (when (or (= (hash-table-count retval) count)
-                    (>= (hash-table-count retval) 5)) ; FIXME 100
+                    (>= (hash-table-count retval) 100))
             (return retval)))
 
         (chrome-runtime-evaluate "window.scrollTo(0, document.body.scrollHeight)")))))
@@ -54,7 +54,7 @@
    (name          :initarg :name :reader name)
    (profile-image :initarg :profile-image :reader profile-image)
    (timestamp     :initarg :timestamp :reader timestamp)
-   (tweet-text    :initarg :tweet-text :reader tweet-text)
+   (text          :initarg :text :reader text)
    (has-media     :initarg :has-media :reader has-media)))
 
 (defun make-tweet (article)
@@ -75,7 +75,9 @@
                 (concatenate 'string "@" (subseq href 1)))
 
       :profile-image (let ((profile-image-url (lquery:$1 first-a "img" (attr "src"))))
-                       (image-url-to-base64-image profile-image-url))
+                       ; TODO Inline base64 images are not supported by Gmail, investigate further
+                       ;(image-url-to-base64-image profile-image-url))
+                       (format nil "<img src=\"~a\"/>" profile-image-url))
 
       :name (lquery:$1 second-a "span" (text))
 
@@ -84,9 +86,34 @@
       :timestamp (lquery:$1 article "time" (attr "datetime"))
 
       ; TODO Handle emojis in the same manner as the profile-image?
-      :tweet-text (lquery:$1 tweet (text))
+      :text (lquery:$1 tweet (text))
 
       ; TODO Handle each type of associated media content
       ;      Most likely handle in the same manner as profile-image
       :has-media (or (> (length (lquery:$1 tweet (parent) (siblings) (html))) 0)
                      (null (lquery:$1 tweet (text)))))))
+
+(defmethod output ((self tweet))
+  (let ((stream (make-string-output-stream)))
+
+    (format stream "<table><tr> \
+                      <td>~a</td> \
+                      <td> \
+                        <div>
+                          ~a <a href=\"~a\">~a</a>
+                          <a href=\"~a\">~a</a>
+                        </div>
+                        <div>~a</div>
+                    "
+      (profile-image self)
+      (name self)
+      (concatenate 'string "https://twitter.com/" (subseq (handle self) 1))
+      (handle self)
+      (url self)
+      (timestamp self)
+      (text self))
+
+    (when (has-media self)
+      (format stream "<div>*unhandled media detected*</div>"))
+    (format stream "</td></tr></table>~%")
+    (get-output-stream-string stream)))

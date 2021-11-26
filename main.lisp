@@ -3,6 +3,7 @@
 (load "sources/twitter.lisp")
 
 (require 'asdf)
+(require 'cl-smtp)
 (require 'local-time)
 (require 'sqlite)
 
@@ -42,21 +43,51 @@
       ; Ignore media only tweets
       (let ((remove '()))
         (loop for url being the hash-key using (hash-value tweet) of tweets
-              do (unless (tweet-text tweet)
+              do (unless (text tweet)
                    (setq remove (cons url remove))))
         (loop for url in remove do (remhash url tweets)))
 
-      ; FIXME STOPPED use a local sqlite db and filter out seen tweets
-      ;               delete entries older than 90 days
+      ; Ignore previously seen tweets
       (sqlite:with-open-database (database "seen.db")
         (sqlite:execute-non-query database
           "create table if not exists seen (id text primary key, added text not null)")
-        (format t "~a~%" database)
-        )
+        (sqlite:execute-non-query database
+          "delete from seen where added < datetime('now', '-90 days')")
 
-      ; FIXME use data mining / text analysis to assign scores to the tweets then sort
-      ; FIXME write a tweet-specific method for outputing html
-      ; FIXME write an email and send it out
-      )
+        (let ((remove '()))
+          (loop for url being the hash-key using (hash-value tweet) of tweets
+                do (if (= 1 (sqlite:execute-single database
+                                "select count(*) from seen where id=?" url))
+                     (setq remove (cons url remove))
+                     (sqlite:execute-non-query database
+                       "insert into seen (id, added) values (?, datetime('now'))" url)))
+          (loop for url in remove do (remhash url tweets))))
+
+      ; FIXME STOPPED Use data mining / text analysis to assign scores and sort the tweets
+
+      (let ((stream (make-string-output-stream)))
+        (format stream "<html><body>~%")
+        (loop for tweet being the hash-value in tweets
+              do (write-string (output tweet) stream))
+        (format stream "</body></html>~%")
+
+        (let ((smtp-server    (cdr (assoc 'smtp-server *config*)))
+              (smtp-port      (cdr (assoc 'smtp-port *config*)))
+              (smtp-username  (cdr (assoc 'smtp-username *config*)))
+              (smtp-password  (cdr (assoc 'smtp-password *config*)))
+              (smtp-from-addr (cdr (assoc 'smtp-from-addr *config*)))
+              (smtp-to-addr   (cdr (assoc 'smtp-to-addr *config*))))
+          (cl-smtp:send-email
+            smtp-server
+            smtp-from-addr
+            smtp-to-addr
+            (format nil "spelunker ~a"
+              (local-time:format-timestring nil (local-time:today)
+                :format '(:year #\- :month #\- :day)))
+            (get-output-stream-string stream)
+            :extra-headers '(("Content-Type" "text/html; charset=\"UTF-8\""))
+            :port 587
+            :ssl :starttls
+            :authentication `(:login ,smtp-username ,smtp-password)))))
 
     (chrome-close chrome)))
