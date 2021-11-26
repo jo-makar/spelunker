@@ -20,8 +20,13 @@ building an interactive web application to more easily support modifying system 
 Scraping is implemented using a custom Chrome DevTools interface.  System state (ie seen entries) is
 maintained by a local SQLite database.
 
-Sources that include images use inline, base64-encoded values rather than external links to avoid
-link rot.
+## Scoring
+
+A custom score is calculated using entries' words
+[TF-IDF](https://en.wikipedia.org/wiki/Tf%E2%80%93idf) and user-defined weights (to indicate
+(dis)interest).
+
+Word frequency across the (thus far seen) corpus is maintained by another local SQLite database.
 
 ## But in Lisp?!
 

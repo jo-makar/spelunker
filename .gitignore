@@ -1,4 +1,6 @@
 config.lisp
+
+corpus.db
 seen.db
 
 .*.swp

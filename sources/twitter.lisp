@@ -48,14 +48,17 @@
         (chrome-runtime-evaluate "window.scrollTo(0, document.body.scrollHeight)")))))
 
 (defclass tweet ()
-  ((html          :initarg :html :reader html)
-   (url           :initarg :url :reader url)
-   (handle        :initarg :handle :reader handle)
-   (name          :initarg :name :reader name)
-   (profile-image :initarg :profile-image :reader profile-image)
-   (timestamp     :initarg :timestamp :reader timestamp)
-   (text          :initarg :text :reader text)
-   (has-media     :initarg :has-media :reader has-media)))
+  ((html            :initarg :html :reader html)
+   (url             :initarg :url :reader url :reader id)
+   (handle          :initarg :handle :reader handle)
+   (name            :initarg :name :reader name)
+   (profile-image   :initarg :profile-image :reader profile-image)
+   (timestamp       :initarg :timestamp :reader timestamp)
+   (text            :initarg :text :reader text)
+   (has-media       :initarg :has-media :reader has-media)
+   (score           :accessor score)
+   (matched-phrases :accessor matched-phrases)
+   (token-tf-idf    :accessor token-tf-idf)))
 
 (defun make-tweet (article)
   (let* ((tweet      (lquery:$1 article "div" (filter #'(lambda (e) (lquery:$1 e (attr "lang"))))))
@@ -115,5 +118,15 @@
 
     (when (has-media self)
       (format stream "<div>*unhandled media detected*</div>"))
+
+    (format stream "<div>score ~2$ " (score self))
+    (loop for phrase in (matched-phrases self)
+          do (format stream "~a " (format nil "~{~a~^+~}" phrase)))
+    (let ((token-tf-idf (token-tf-idf self)))
+      (loop for tf-idf in (subseq token-tf-idf 0 (min (length token-tf-idf) 5))
+            do (format stream "~a/~2$ " (car tf-idf) (cdr tf-idf))))
+    (format stream "</div>")
+
     (format stream "</td></tr></table>~%")
+
     (get-output-stream-string stream)))
