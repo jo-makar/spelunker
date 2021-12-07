@@ -27,7 +27,7 @@
         (sb-sys:with-deadline (:seconds 60)
           (loop
             (let ((counts (loop repeat 3
-                                do (sleep 1)
+                                do (sleep 3)
                                 collect (tweet-count))))
               (let ((first (first counts))
                     (last (car (last counts))))
@@ -39,7 +39,8 @@
                (html   (chrome-runtime-evaluate "document.documentElement.outerHTML"))
                (tweets (lquery:$ (initialize html) "article" (each #'make-tweet :replace t))))
           (loop for tweet across tweets
-                do (setf (gethash (url tweet) retval) tweet))
+                do (when tweet
+                     (setf (gethash (url tweet) retval) tweet)))
 
           (when (or (= (hash-table-count retval) count)
                     (>= (hash-table-count retval) 100))
@@ -61,6 +62,9 @@
    (token-tf-idf    :accessor token-tf-idf)))
 
 (defun make-tweet (article)
+  (when (string= (lquery:$1 article (text)) "This Tweet is unavailable.")
+    (return-from make-tweet nil))
+
   (let* ((tweet      (lquery:$1 article "div" (filter #'(lambda (e) (lquery:$1 e (attr "lang"))))))
          (is-retweet (if (search "Retweeted" (lquery:$1 article "a" (text))) t))
 
