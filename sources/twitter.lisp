@@ -62,44 +62,51 @@
    (token-tf-idf    :accessor token-tf-idf)))
 
 (defun make-tweet (article)
-  (when (string= (lquery:$1 article (text)) "This Tweet is unavailable.")
-    (return-from make-tweet nil))
-
-  (let* ((tweet      (lquery:$1 article "div" (filter #'(lambda (e) (lquery:$1 e (attr "lang"))))))
-         (is-retweet (if (search "Retweeted" (lquery:$1 article "a" (text))) t))
-
-         (a-offset   (if is-retweet 1 0))
-         (first-a    (lquery:$1 article "a" #'(lambda (e) (aref e (+ 0 a-offset)))))
-         (second-a   (lquery:$1 article "a" #'(lambda (e) (aref e (+ 1 a-offset)))))
-         (third-a    (lquery:$1 article "a" #'(lambda (e) (aref e (+ 2 a-offset))))))
-
-    (make-instance 'tweet
-      :html (lquery:$ article (html))
-
-      :handle (let ((href (lquery:$1 first-a (attr "href"))))
-                (unless (char= (char href 0) #\/)
-                  (error "unexpected handle href format"))
-                (concatenate 'string "@" (subseq href 1)))
-
-      :profile-image (let ((profile-image-url (lquery:$1 first-a "img" (attr "src"))))
-                       ; TODO Inline base64 images are not supported by Gmail, investigate further
-                       ;(image-url-to-base64-image profile-image-url))
-                       (format nil "<img src=\"~a\"/>" profile-image-url))
-
-      :name (lquery:$1 second-a "span" (text))
-
-      :url (concatenate 'string "https://twitter.com" (lquery:$1 third-a (attr "href")))
-
-      :timestamp (lquery:$1 article "time" (attr "datetime"))
-
-      ; TODO Handle emojis in the same manner as the profile-image?
-      :text (lquery:$1 tweet (text))
-
-      ; TODO Handle each type of associated media content
-      ;      Most likely handle in the same manner as profile-image
-      :has-media (or (> (length (lquery:$1 tweet (parent) (siblings) (html))) 0)
-                     (null (lquery:$1 tweet (text)))))))
-
+  (handler-case
+    (progn
+      (when (string= (lquery:$1 article (text)) "This Tweet is unavailable.")
+        (return-from make-tweet nil))
+    
+      (let* ((tweet      (lquery:$1 article "div" (filter #'(lambda (e) (lquery:$1 e (attr "lang"))))))
+             (is-retweet (if (search "Retweeted" (lquery:$1 article "a" (text))) t))
+    
+             (a-offset   (if is-retweet 1 0))
+             (first-a    (lquery:$1 article "a" #'(lambda (e) (aref e (+ 0 a-offset)))))
+             (second-a   (lquery:$1 article "a" #'(lambda (e) (aref e (+ 1 a-offset)))))
+             (third-a    (lquery:$1 article "a" #'(lambda (e) (aref e (+ 2 a-offset))))))
+    
+        (make-instance 'tweet
+          :html (lquery:$ article (html))
+    
+          :handle (let ((href (lquery:$1 first-a (attr "href"))))
+                    (unless (char= (char href 0) #\/)
+                      (error "unexpected handle href format"))
+                    (concatenate 'string "@" (subseq href 1)))
+    
+          :profile-image (let ((profile-image-url (lquery:$1 first-a "img" (attr "src"))))
+                           ; TODO Inline base64 images are not supported by Gmail, investigate further
+                           ;(image-url-to-base64-image profile-image-url))
+                           (format nil "<img src=\"~a\"/>" profile-image-url))
+    
+          :name (lquery:$1 second-a "span" (text))
+    
+          :url (concatenate 'string "https://twitter.com" (lquery:$1 third-a (attr "href")))
+    
+          :timestamp (lquery:$1 article "time" (attr "datetime"))
+    
+          ; TODO Handle emojis in the same manner as the profile-image?
+          :text (lquery:$1 tweet (text))
+    
+          ; TODO Handle each type of associated media content
+          ;      Most likely handle in the same manner as profile-image
+          :has-media (or (> (length (lquery:$1 tweet (parent) (siblings) (html))) 0)
+                         (null (lquery:$1 tweet (text)))))))
+    (error (c)
+      (declare (ignore c))
+      ; TODO Ideally make an error "tweet" that includes the offending html
+      (log-format 'warn "error processing tweet")
+      nil)))
+    
 (defmethod output ((self tweet))
   (let ((stream (make-string-output-stream)))
 

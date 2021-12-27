@@ -108,7 +108,7 @@
             smtp-to-addr
             (format nil "spelunker ~a"
               (local-time:format-timestring nil (local-time:now)
-                :format '(:year #\- :month #\- :day)))
+                :format '(:year #\- (:month 2) #\- (:day 2))))
             (get-output-stream-string stream)
             :extra-headers '(("Content-Type" "text/html; charset=\"UTF-8\""))
             :port 587
