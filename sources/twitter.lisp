@@ -42,11 +42,13 @@
                 do (when tweet
                      (setf (gethash (url tweet) retval) tweet)))
 
+          (log-format 'debug "unique tweet count ~d" (hash-table-count retval))
           (when (or (= (hash-table-count retval) count)
                     (>= (hash-table-count retval) 100))
-            (return retval)))
+            (return)))
 
-        (chrome-runtime-evaluate "window.scrollTo(0, document.body.scrollHeight)")))))
+        (chrome-runtime-evaluate "window.scrollTo(0, document.body.scrollHeight)"))
+      retval)))
 
 (defclass tweet ()
   ((html            :initarg :html :reader html)
@@ -110,9 +112,9 @@
 (defmethod output ((self tweet))
   (let ((stream (make-string-output-stream)))
 
-    (format stream "<table><tr> \
-                      <td>~a</td> \
-                      <td> \
+    (format stream "<table><tr>
+                      <td>~a</td>
+                      <td>
                         <div>
                           ~a <a href=\"~a\">~a</a>
                           <a href=\"~a\">~a</a>

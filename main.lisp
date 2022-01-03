@@ -1,6 +1,7 @@
 (load "chrome.lisp")
 (load "config.lisp")
 (load "score.lisp")
+(load "sources/linkedin.lisp")
 (load "sources/twitter.lisp")
 
 (require 'asdf)
@@ -51,6 +52,13 @@
 
         (loop for tweet being the hash-value in tweets
               do (setq entries (cons tweet entries))))
+
+      ;
+      ; Linkedin jobs
+      ;
+
+      (loop for job being the hash-value in (linkedin-jobs chrome :remote t)
+            do (setq entries (cons job entries)))
 
       ; Ignore previously seen entries
 
