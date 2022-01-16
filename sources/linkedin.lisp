@@ -38,7 +38,7 @@
                                  (when (and (> last 0) (= first last))
                                    (log-format 'debug "job count stable at ~d" last)
                                    (return last))))))))
-              (when (= count 25)
+              (when (>= count 25)
                 (return))
               (chrome-runtime-evaluate "window.scrollTo(0, window.scrollY + window.innerHeight)"))))
 
